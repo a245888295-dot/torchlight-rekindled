@@ -1,0 +1,86 @@
+# Builds the Chinese launcher APK on GitHub's runners.
+#
+# The launcher is Java only: `android/java/port/android/*.java` compiled against
+# the platform jar, turned into `classes.dex` by d8, put into the official 1.0.2
+# APK by `tools/repack_apk.py`, and signed with `android/zh-signing.jks`. The
+# engine library, the manifest, the resources and the assets are the release's,
+# unchanged -- which is what lets the launcher be rebuilt without an NDK, a
+# CMake tree or the Windows toolchain `scripts/build_apk.py` expects.
+#
+# The base APK's SHA-256 is checked against the one the 1.0.2 release publishes,
+# so a tampered or moved release fails the build instead of being signed.
+name: Android APK (zh launcher)
+
+on:
+  push:
+    branches: [zh-launcher]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK
+        run: |
+          set -eu
+          root="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          manager="$root/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$manager" --licenses > /dev/null 2>&1 || true
+          "$manager" "platforms;android-36" "build-tools;34.0.0" > /dev/null
+          echo "SDK=$root" >> "$GITHUB_ENV"
+          echo "BT=$root/build-tools/34.0.0" >> "$GITHUB_ENV"
+
+      - name: The official 1.0.2 APK, checked
+        run: |
+          set -eu
+          curl -sSL -o base.apk \
+            https://github.com/GreenSwampDweller/torchlight-rekindled/releases/download/1.0.2/TorchlightRekindled-1.0.2.apk
+          echo "83dc713fb987130f27097f8e9def08cb496acde21618bcec6af47d3c1ebb4365  base.apk" | sha256sum -c -
+
+      - name: Compile the launcher
+        run: |
+          set -eu
+          mkdir -p out
+          javac -encoding UTF-8 -source 8 -target 8 -nowarn \
+            -cp "$SDK/platforms/android-36/android.jar" \
+            -d out android/java/port/android/*.java
+          find out -name '*.class' | sort
+
+      - name: Dex
+        run: |
+          set -eu
+          mkdir -p dex
+          "$BT/d8" --min-api 31 --lib "$SDK/platforms/android-36/android.jar" \
+            --output dex out/port/android/*.class
+          ls -l dex
+
+      - name: Repack
+        run: python3 tools/repack_apk.py base.apk dex/classes.dex unsigned.apk
+
+      - name: Sign and verify
+        run: |
+          set -eu
+          "$BT/apksigner" sign \
+            --ks android/zh-signing.jks --ks-pass pass:torchlightzh \
+            --ks-key-alias torchlightzh --key-pass pass:torchlightzh \
+            --out TorchlightRekindled-1.0.2-zh.apk unsigned.apk
+          "$BT/apksigner" verify --print-certs TorchlightRekindled-1.0.2-zh.apk
+          sha256sum TorchlightRekindled-1.0.2-zh.apk | tee sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TorchlightRekindled-1.0.2-zh
+          path: |
+            TorchlightRekindled-1.0.2-zh.apk
+            sha256.txt
+          if-no-files-found: error
