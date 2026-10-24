@@ -40,6 +40,13 @@ jobs:
           ninja --version
           ls external/ogre/CMakeLists.txt external/particleuniverse
 
+      - name: Python with Pillow
+        run: |
+          set -eu
+          python3 -m pip install --quiet --break-system-packages pillow
+          python3 -c "import PIL; print('pillow', PIL.__version__)"
+          echo "TL_PYTHON=$(command -v python3)" >> "$GITHUB_ENV"
+
       - name: Configure OGRE for Android
         run: |
           set -eu
@@ -88,7 +95,8 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-31 \
             -DCMAKE_BUILD_TYPE=Release \
-            -DTL_OGRE_BUILD_DIR="$PWD/build-ogre-android"
+            -DTL_OGRE_BUILD_DIR="$PWD/build-ogre-android" \
+            -DTL_PYTHON="$TL_PYTHON"
 
       - name: Build the engine
         run: cmake --build build-android --target torchlight --parallel "$(nproc)"
