@@ -81,7 +81,7 @@ public final class Launcher extends Activity {
     private static final int PAGE_ABOUT = 3;
 
     /** Which build this is: the About page shows it, and `strings` on the installed dex finds it. */
-    private static final String BUILD = "zh3";
+    private static final String BUILD = "zh4";
 
     private static final String[] TAB_ICONS = {"⌂", "⚙", "✦", "ⓘ"};
     private static final String[] TAB_NAMES = {"首页", "设置", "补丁", "关于"};

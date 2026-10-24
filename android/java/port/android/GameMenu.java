@@ -2,24 +2,30 @@
 // at start (the resolution it renders at, the frame limit, the frame-rate
 // overlay) and the way out of the game.
 //
-// It cannot be live, and it does not pretend to be: `read_render_scale()` and
-// `load_run_config()` run once, in `android_main` before the engine starts, so
-// what is written here is read on the next start. The panel says so. The one
-// exception is the overlay, which the engine also toggles with L3 in the game.
+// It is a Dialog, not a view on the activity's decor view. A NativeActivity
+// draws into a SurfaceView, whose buffer is a layer of its own: a view added
+// beside it in the activity's window is not reliably above it. A dialog is a
+// window above the activity's, so the panel is above the game by
+// construction -- and while it is up it takes the touches, so the game does
+// not play itself behind it.
 //
-// It is a plain view on top of the activity's decor view, above the native
-// surface, so the engine keeps drawing behind it and nothing needs a new
-// window, a permission or a manifest entry.
+// Nothing here is live, and it does not pretend to be: `read_render_scale()`
+// and `load_run_config()` run once, in `android_main` before the engine
+// starts, so what is written here is read on the next start. The panel says
+// so. The one exception is the overlay, which the engine also toggles with L3.
 package port.android;
 
 import android.app.Activity;
+import android.app.Dialog;
 import android.content.res.ColorStateList;
 import android.graphics.Rect;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.WindowInsets;
+import android.view.Window;
+import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -33,8 +39,8 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.util.Locale;
 
-final class GameMenu extends FrameLayout {
-    /** What the panel cannot do itself: leave, hide, or end the game. */
+final class GameMenu {
+    /** What the panel cannot do itself: hide, or end the game. */
     interface Host {
         void minimise();
 
@@ -56,20 +62,19 @@ final class GameMenu extends FrameLayout {
     private static final int C_RED = 0xFFE04B42;
 
     private final Activity host;
-    private final Host callbacks;
+    private final Dialog dialog;
     /** The game folder, from the launcher's `game_data.txt`; null if that is missing. */
     private final String folder;
     private final int[] screen;
 
     GameMenu(Activity host, Host callbacks) {
-        super(host);
         this.host = host;
-        this.callbacks = callbacks;
         this.folder = folderOf(host);
         this.screen = screenSize(host);
 
-        setBackgroundColor(C_SCRIM);
-        setVisibility(GONE);
+        FrameLayout scrim = new FrameLayout(host);
+        scrim.setBackgroundColor(C_SCRIM);
+        scrim.setOnClickListener(v -> close());
 
         LinearLayout card = new LinearLayout(host);
         card.setOrientation(LinearLayout.VERTICAL);
@@ -135,27 +140,41 @@ final class GameMenu extends FrameLayout {
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
         lp.setMargins(dp(24), dp(24), dp(24), dp(24));
-        addView(scroll, lp);
+        scrim.addView(scroll, lp);
 
-        // The panel is over the system bars too: keep the card inside them.
-        setOnApplyWindowInsetsListener((v, insets) -> {
-            android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars());
-            v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
-            return insets;
-        });
+        dialog = new Dialog(host, android.R.style.Theme_DeviceDefault_NoActionBar);
+        dialog.setContentView(scrim);
+        dialog.setCancelable(true);
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(0));
+            // The scrim is the dimming: a second one from the theme would
+            // make the game behind it almost black.
+            window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT);
+        }
     }
 
     boolean opened() {
-        return getVisibility() == VISIBLE;
+        return dialog.isShowing();
     }
 
     void open() {
-        setVisibility(VISIBLE);
-        bringToFront();
+        GameActivity.trace(host, "panel: open");
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT);
+        }
     }
 
     void close() {
-        setVisibility(GONE);
+        if (dialog.isShowing()) {
+            GameActivity.trace(host, "panel: close");
+            dialog.dismiss();
+        }
     }
 
     // ------------------------------------------------------------- the files
@@ -196,7 +215,7 @@ final class GameMenu extends FrameLayout {
     // ------------------------------------------------------------- the views
 
     private int dp(int value) {
-        return (int) (value * getResources().getDisplayMetrics().density);
+        return (int) (value * host.getResources().getDisplayMetrics().density);
     }
 
     private static GradientDrawable round(int color, int stroke, int radius) {
@@ -296,7 +315,7 @@ final class GameMenu extends FrameLayout {
 
     // ------------------------------------------------------------- the figures
 
-    private int[] screenSize(Activity activity) {
+    private static int[] screenSize(Activity activity) {
         Rect bounds = activity.getWindowManager().getMaximumWindowMetrics().getBounds();
         int w = bounds.width();
         int h = bounds.height();

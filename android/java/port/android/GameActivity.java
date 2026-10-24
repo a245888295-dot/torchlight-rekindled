@@ -1,25 +1,37 @@
 // The game's activity: NativeActivity, which loads libtorchlight.so and runs
-// its android_main(), with two changes.
+// its android_main(), with two changes of this port's own.
 //
 // Back (on a phone with gesture navigation, a swipe in from either side, easy
-// to make while playing with the touch pad) opens the panel the port adds on
-// top of the surface -- resolution, frame limit, the frame-rate overlay, and
-// the way out of the game -- instead of finishing the activity and so ending
-// the run. Back again closes it. The panel is a view on this activity's decor
-// view, so the engine keeps its own loop and window; nothing here touches the
-// native side.
+// to make while playing with the touch pad) opens the panel: the render
+// resolution, the frame limit, the frame-rate overlay, and the way out of the
+// game. Back again closes it. The panel is a dialog -- a window above this
+// activity's -- so it is above the engine's surface, and it takes the touches
+// while it is up.
 //
-// The game is left where it was when it is minimised: the engine waits in the
-// background for its window to come back.
+// Every path Back can arrive by is handled, because which one the system uses
+// depends on the phone: a key event (three-button navigation, a keyboard), the
+// activity's onBackPressed (gesture navigation on an app that has not opted
+// into the predictive back callback), or the OnBackInvokedCallback itself.
+//
+// Each of those writes a line to the app's own log (`panel.log` in its files),
+// so a back that does nothing can be told from a panel that does not show.
 package port.android;
 
+import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.NativeActivity;
 import android.os.Build;
 import android.os.Bundle;
-import android.view.ViewGroup;
+import android.view.KeyEvent;
 import android.window.OnBackInvokedCallback;
 import android.window.OnBackInvokedDispatcher;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 
 public final class GameActivity extends NativeActivity {
     /** The panel over the surface; null until onCreate has run. */
@@ -42,19 +54,15 @@ public final class GameActivity extends NativeActivity {
                 askToQuit();
             }
         });
-        // Above the native surface: the engine draws into its own window below
-        // this one, and the panel is a view of the activity's, so it needs no
-        // permission, no extra window and no manifest entry.
-        ((ViewGroup) getWindow().getDecorView()).addView(menu, new ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // From Android 13 Back arrives as a callback (the predictive back
-        // gesture); onBackPressed() below is the older phones' path.
+        // From Android 13 Back may arrive as a callback (the predictive back
+        // gesture); the other paths are below, for the phones that do not.
         if (Build.VERSION.SDK_INT >= 33) {
             OnBackInvokedCallback toggle = this::toggleMenu;
             getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
                     OnBackInvokedDispatcher.PRIORITY_DEFAULT, toggle);
         }
+        trace(this, "game: panel ready");
     }
 
     /** Back opens the panel, and closes it again while it is open. */
@@ -67,7 +75,20 @@ public final class GameActivity extends NativeActivity {
     @Override
     @SuppressWarnings("deprecation")
     public void onBackPressed() {
+        trace(this, "back: onBackPressed");
         toggleMenu();
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                trace(this, "back: key event");
+                toggleMenu();
+            }
+            return true;  // taken here: the engine must not see it as well
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     private void askToQuit() {
@@ -83,5 +104,23 @@ public final class GameActivity extends NativeActivity {
     protected void onDestroy() {
         Launcher.gameEnded();
         super.onDestroy();
+    }
+
+    /**
+     * A line in the app's own log, and in logcat: what Back did and whether the
+     * panel came up. Kept small -- the file is rewritten once it passes 64 KB.
+     */
+    static void trace(Activity activity, String line) {
+        android.util.Log.i("torchlight", line);
+        File file = new File(activity.getFilesDir(), "panel.log");
+        try {
+            if (file.length() > 65536) file.delete();
+            try (FileOutputStream out = new FileOutputStream(file, true)) {
+                String stamp = new SimpleDateFormat("MM-dd HH:mm:ss", Locale.ROOT).format(new Date());
+                out.write((stamp + " " + line + "\n").getBytes("UTF-8"));
+            }
+        } catch (IOException e) {
+            // Logging is a courtesy; it must never break the game.
+        }
     }
 }
