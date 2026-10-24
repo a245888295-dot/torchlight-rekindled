@@ -80,6 +80,9 @@ public final class Launcher extends Activity {
     private static final int PAGE_PATCHES = 2;
     private static final int PAGE_ABOUT = 3;
 
+    /** Which build this is: the About page shows it, and `strings` on the installed dex finds it. */
+    private static final String BUILD = "zh2";
+
     private static final String[] TAB_ICONS = {"⌂", "⚙", "✦", "ⓘ"};
     private static final String[] TAB_NAMES = {"首页", "设置", "补丁", "关于"};
 
@@ -263,6 +266,13 @@ public final class Launcher extends Activity {
         header("设置", "修改后立即生效；分辨率在下次进入游戏时生效");
 
         String folder = prefs().getString(KEY_FOLDER, null);
+        if (folder == null) {
+            LinearLayout hint = card();
+            hint.addView(text("还没有选择游戏目录", 15, C_GOLD, true));
+            hint.addView(text("这些开关先记在本程序里；选好目录、进游戏时会写进游戏目录的 config.txt。",
+                    12, C_DIM, false));
+            content.addView(hint);
+        }
         int[] screen = screenSize();
         int scale = Math.max(MIN_SCALE, Math.min(100, prefs().getInt(KEY_SCALE, 100)));
         int limit = limitNow(folder);
@@ -316,6 +326,13 @@ public final class Launcher extends Activity {
         header("补丁", "引擎读取的 config.txt 开关，改完进游戏即生效");
 
         String folder = prefs().getString(KEY_FOLDER, null);
+        if (folder == null) {
+            LinearLayout hint = card();
+            hint.addView(text("还没有选择游戏目录", 15, C_GOLD, true));
+            hint.addView(text("这些开关先记在本程序里；选好目录、进游戏时会写进游戏目录的 config.txt。",
+                    12, C_DIM, false));
+            content.addView(hint);
+        }
         boolean overlay = flagNow(folder, "fps", KEY_OVERLAY, false);
         boolean camera = flagNow(folder, "free_camera", KEY_CAMERA, false);
 
@@ -353,6 +370,7 @@ public final class Launcher extends Activity {
         app.addView(text("程序", 15, C_GOLD, true));
         row(app, "名称", "Torchlight Rekindled（汉化版）", true);
         row(app, "版本", versionName() + "（versionCode " + versionCode() + "）", true);
+        row(app, "构建", "汉化版 " + BUILD, true);
         row(app, "包名", getPackageName(), true);
         row(app, "启动器", "启动器已重做：底部导航 · 中文界面", true);
         row(app, "签名 SHA-256", signature(), true);
@@ -468,6 +486,7 @@ public final class Launcher extends Activity {
                     .show();
             return;
         }
+        applyStored(folder);
         File app = getExternalFilesDir(null);
         try (OutputStream out = new FileOutputStream(new File(app, "game_data.txt"))) {
             out.write((folder + "\n").getBytes("UTF-8"));
@@ -546,6 +565,40 @@ public final class Launcher extends Activity {
             if (Math.abs(LIMITS[i] - limit) < Math.abs(LIMITS[at] - limit)) at = i;
         }
         return at;
+    }
+
+    /** Whether config.txt already names this key: the engine's own value is kept when it does. */
+    private static boolean hasConfig(String folder, String wanted) {
+        try {
+            for (String line : read(new File(folder, "config.txt")).split("\r?\n")) {
+                String[] kv = line.split("#", 2)[0].split("=", 2);
+                if (kv.length >= 2 && kv[0].trim().equalsIgnoreCase(wanted)) return true;
+            }
+        } catch (IOException e) {
+            // No file yet.
+        }
+        return false;
+    }
+
+    /**
+     * The switches this screen owns, written into a config.txt that does not name them yet: the
+     * engine writes its own on the first start, and from then on it is the one that knows (L3
+     * toggles the overlay inside the game, and that has to survive the next start).
+     */
+    private void applyStored(String folder) {
+        SharedPreferences p = prefs();
+        if (p.contains(KEY_LIMIT) && !hasConfig(folder, "fps_limit")) {
+            writeConfig(folder, "fps_limit", p.getInt(KEY_LIMIT, DEFAULT_LIMIT), DEFAULT_LIMIT,
+                    "the most frames a second the game draws; 0 for no limit.");
+        }
+        if (p.contains(KEY_OVERLAY) && !hasConfig(folder, "fps")) {
+            writeConfig(folder, "fps", p.getBoolean(KEY_OVERLAY, false) ? 1 : 0, 0,
+                    "the frame-rate overlay; L3 switches it in the game, and it is kept here.");
+        }
+        if (p.contains(KEY_CAMERA) && !hasConfig(folder, "free_camera")) {
+            writeConfig(folder, "free_camera", p.getBoolean(KEY_CAMERA, false) ? 1 : 0, 0,
+                    "the right stick turns the camera and R3 resets it; a pinch zooms.");
+        }
     }
 
     /**
