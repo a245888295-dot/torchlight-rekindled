@@ -1,0 +1,109 @@
+# Can this repository build libtorchlight.so on a Linux runner at all?
+#
+# Nothing here changes the engine: it is the same flags scripts/build_ogre.py
+# passes for --platform android, and the same engine configuration
+# cmake/android.cmake expects, with the Windows paths taken out. The point is
+# to find out whether a Chinese font pipeline could ever be compiled and
+# shipped -- if OGRE does not build here, that road is closed and no amount of
+# font work would open it.
+name: Native library (experiment)
+
+on:
+  push:
+    branches: [native-so]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Toolchain
+        run: |
+          set -eu
+          sdk="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          ndk="${ANDROID_NDK_LATEST_HOME:-}"
+          if [ -z "$ndk" ] || [ ! -d "$ndk" ]; then
+            ndk="$(ls -d "$sdk"/ndk/* 2>/dev/null | sort -V | tail -1)"
+          fi
+          test -d "$ndk" || { echo "no NDK"; exit 1; }
+          echo "NDK=$ndk" >> "$GITHUB_ENV"
+          echo "ndk: $ndk"
+          cmake --version | head -1
+          ninja --version
+          ls external/ogre/CMakeLists.txt external/particleuniverse
+
+      - name: Configure OGRE for Android
+        run: |
+          set -eu
+          cmake -S external/ogre -B build-ogre-android -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-31 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PROJECT_INCLUDE_BEFORE="$PWD/cmake/file_prefix_map.cmake" \
+            -DOGRE_BUILD_DEPENDENCIES=ON \
+            -DOGRE_ENABLE_PRECOMPILED_HEADERS=OFF \
+            -DOGRE_BUILD_SAMPLES=OFF -DOGRE_BUILD_TOOLS=OFF -DOGRE_BUILD_TESTS=OFF \
+            -DOGRE_BUILD_PLUGIN_CG=OFF -DOGRE_BUILD_PLUGIN_FREEIMAGE=OFF \
+            -DOGRE_BUILD_PLUGIN_ASSIMP=OFF -DOGRE_BUILD_PLUGIN_DOT_SCENE=OFF \
+            -DOGRE_BUILD_PLUGIN_EXRCODEC=OFF -DOGRE_BUILD_PLUGIN_GLSLANG=OFF \
+            -DOGRE_BUILD_PLUGIN_PFX=OFF -DOGRE_BUILD_PLUGIN_OCTREE=OFF \
+            -DOGRE_BUILD_PLUGIN_BSP=OFF -DOGRE_BUILD_PLUGIN_PCZ=OFF \
+            -DOGRE_BUILD_COMPONENT_PYTHON=OFF -DOGRE_BUILD_COMPONENT_CSHARP=OFF \
+            -DOGRE_BUILD_COMPONENT_JAVA=OFF -DOGRE_BUILD_COMPONENT_BITES=OFF \
+            -DOGRE_BUILD_COMPONENT_TERRAIN=OFF -DOGRE_BUILD_COMPONENT_PAGING=OFF \
+            -DOGRE_BUILD_COMPONENT_VOLUME=OFF -DOGRE_BUILD_COMPONENT_PROPERTY=OFF \
+            -DOGRE_BUILD_COMPONENT_MESHLODGENERATOR=OFF \
+            -DOGRE_BUILD_COMPONENT_OVERLAY_IMGUI=OFF \
+            -DOGRE_BUILD_COMPONENT_RTSHADERSYSTEM=ON \
+            -DOGRE_BUILD_COMPONENT_OVERLAY=ON \
+            -DOGRE_BUILD_RENDERSYSTEM_GLES2=ON -DOGRE_BUILD_RENDERSYSTEM_GL=OFF \
+            -DOGRE_BUILD_RENDERSYSTEM_GL3PLUS=OFF -DOGRE_BUILD_RENDERSYSTEM_VULKAN=OFF \
+            -DOGRE_BUILD_RENDERSYSTEM_TINY=OFF \
+            -DOGRE_BUILD_PLUGIN_STBI=ON \
+            -DOGRE_CONFIG_THREADS=0 -DOGRE_RESOURCEMANAGER_STRICT=0 \
+            -DOGRE_STATIC=ON -DBUILD_SHARED_LIBS=OFF \
+            -DOGRE_BUILD_ANDROID_JNI_SAMPLE=OFF
+
+      - name: Build OGRE
+        run: cmake --build build-ogre-android --parallel "$(nproc)"
+
+      - name: What OGRE produced
+        run: |
+          set -eu
+          ls build-ogre-android/lib | head -30
+          test -f build-ogre-android/lib/libOgreMainStatic.a || { echo "no OgreMainStatic"; exit 1; }
+
+      - name: Configure the engine
+        run: |
+          set -eu
+          cmake -S . -B build-android -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-31 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DTL_OGRE_BUILD_DIR="$PWD/build-ogre-android"
+
+      - name: Build the engine
+        run: cmake --build build-android --target torchlight --parallel "$(nproc)"
+
+      - name: The library
+        run: |
+          set -eu
+          find build-android -name 'libtorchlight.so' -exec ls -l {} \;
+          so="$(find build-android -name 'libtorchlight.so' | head -1)"
+          test -n "$so"
+          test "$(stat -c%s "$so")" -gt 1000000 || { echo "too small: engine built without rendering?"; exit 1; }
+          sha256sum "$so"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libtorchlight-so
+          path: '**/libtorchlight.so'
+          if-no-files-found: error
