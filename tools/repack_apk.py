@@ -11,16 +11,35 @@ Taking the release as the base is also what keeps the build honest: the
 workflow checks the base's SHA-256 against the one the release publishes, so
 the only thing this script can change is the dex.
 
+Rewriting the archive moves every entry after the first one whose compressed
+size changes, which is why `resources.arsc` is aligned again here by hand: the
+system refuses an APK whose resources are not uncompressed and 4-byte aligned
+(targetSdk 30 and later). The padding is the extra field zipalign itself writes
+(id 0xd935), so the archive stays a well-formed zip.
+
     python3 tools/repack_apk.py base.apk dex/classes.dex unsigned.apk
 """
+import struct
 import sys
 import zipfile
 
-# Entries that must stay uncompressed and 4-byte aligned: the system refuses an
-# APK whose resources.arsc is not (targetSdk 30 and later).
+# Entries that must stay uncompressed and 4-byte aligned.
 ALIGNED = ("resources.arsc",)
-# The signature files of the base APK: apksigner writes its own.
+# The base APK's own signature files: apksigner writes its own.
 SIGNATURE_DIR = "META-INF/"
+ALIGNMENT_EXTRA = 0xD935
+
+
+def padding(name, offset, needed):
+    """The extra field that puts this entry's data on a 4-byte boundary."""
+    if name not in ALIGNED:
+        return b""
+    base = (offset + 30 + len(name.encode())) % 4
+    if base == 0:
+        return b""
+    # An extra field is at least 4 bytes: id, size, then the bytes.
+    room = (4 - base) % 4
+    return struct.pack("<HH", ALIGNMENT_EXTRA, room) + b"\0" * room
 
 
 def repack(base, dex, out):
@@ -38,6 +57,9 @@ def repack(base, dex, out):
             entry.compress_type = info.compress_type
             entry.external_attr = info.external_attr
             entry.create_system = info.create_system
+            # Where this entry's local header is about to go, which is what
+            # the alignment is measured from.
+            entry.extra = padding(info.filename, dst.fp.tell(), 4)
             dst.writestr(entry, data)
     return check(out)
 
@@ -45,6 +67,9 @@ def repack(base, dex, out):
 def check(path):
     """The alignment the system checks, and the count of what went in."""
     z = zipfile.ZipFile(path)
+    bad = z.testzip()
+    if bad is not None:
+        raise SystemExit(f"{path}: corrupt entry {bad}")
     for info in z.infolist():
         if info.filename in ALIGNED:
             if info.compress_type != 0:
