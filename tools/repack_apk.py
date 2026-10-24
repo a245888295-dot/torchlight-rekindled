@@ -18,6 +18,7 @@ system refuses an APK whose resources are not uncompressed and 4-byte aligned
 (id 0xd935), so the archive stays a well-formed zip.
 
     python3 tools/repack_apk.py base.apk dex/classes.dex unsigned.apk
+    python3 tools/repack_apk.py base.apk dex/classes.dex unsigned.apk --lib libtorchlight.so
 """
 import struct
 import sys
@@ -42,17 +43,28 @@ def padding(name, offset, needed):
     return struct.pack("<HH", ALIGNMENT_EXTRA, room) + b"\0" * room
 
 
-def repack(base, dex, out):
+ENGINE = "lib/arm64-v8a/libtorchlight.so"
+
+
+def repack(base, dex, out, lib=None):
     with open(dex, "rb") as handle:
         new_dex = handle.read()
     src = zipfile.ZipFile(base)
     if "classes.dex" not in src.namelist():
         raise SystemExit(f"{base}: no classes.dex")
+    replaced = {"classes.dex": new_dex}
+    if lib:
+        # The engine, when this build has one of its own: the release's is
+        # what an ordinary launcher change keeps.
+        with open(lib, "rb") as handle:
+            replaced[ENGINE] = handle.read()
+        if ENGINE not in src.namelist():
+            raise SystemExit(f"{base}: no {ENGINE} to replace")
     with zipfile.ZipFile(out, "w") as dst:
         for info in src.infolist():
             if info.filename.startswith(SIGNATURE_DIR):
                 continue
-            data = new_dex if info.filename == "classes.dex" else src.read(info.filename)
+            data = replaced.get(info.filename) or src.read(info.filename)
             entry = zipfile.ZipInfo(info.filename, info.date_time)
             entry.compress_type = info.compress_type
             entry.external_attr = info.external_attr
@@ -81,7 +93,9 @@ def check(path):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
+    args = [a for a in sys.argv[1:] if not a.startswith("--lib=")]
+    lib = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--lib=")), None)
+    if len(args) != 3:
         raise SystemExit(__doc__)
-    count, size = repack(*sys.argv[1:])
-    print(f"{sys.argv[3]}: {count} entries, {size} bytes uncompressed")
+    count, size = repack(args[0], args[1], args[2], lib)
+    print(f"{args[2]}: {count} entries, {size} bytes uncompressed" + (f", engine {lib}" if lib else ""))

@@ -115,17 +115,61 @@ jobs:
       - name: Build the engine
         run: cmake --build build-android --target torchlight --parallel "$(nproc)"
 
-      - name: The library
+      - name: Strip the library
         run: |
           set -eu
-          find build-android -name 'libtorchlight.so' -exec ls -l {} \;
           so="$(find build-android -name 'libtorchlight.so' | head -1)"
           test -n "$so"
-          test "$(stat -c%s "$so")" -gt 1000000 || { echo "too small: engine built without rendering?"; exit 1; }
+          strip="$(dirname "$(command -v "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang")")/llvm-strip"
+          "$strip" --strip-unneeded "$so"
+          ls -l "$so"
+          test "$(stat -c%s "$so")" -gt 5000000 || { echo "too small: engine built without rendering?"; exit 1; }
           sha256sum "$so"
+          echo "SO=$so" >> "$GITHUB_ENV"
+
+      - name: Android SDK
+        run: |
+          set -eu
+          root="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          manager="$root/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$manager" --licenses > /dev/null 2>&1 || true
+          "$manager" "platforms;android-36" "build-tools;34.0.0" > /dev/null
+          echo "SDK=$root" >> "$GITHUB_ENV"
+          echo "BT=$root/build-tools/34.0.0" >> "$GITHUB_ENV"
+
+      - name: The launcher, against the platform jar
+        run: |
+          set -eu
+          mkdir -p out dex
+          javac -encoding UTF-8 -source 8 -target 8 -nowarn \
+            -cp "$SDK/platforms/android-36/android.jar" \
+            -d out android/java/port/android/*.java
+          "$BT/d8" --min-api 31 --lib "$SDK/platforms/android-36/android.jar" \
+            --output dex out/port/android/*.class
+
+      - name: The official 1.0.2 APK, checked
+        run: |
+          set -eu
+          curl -sSL -o base.apk \
+            https://github.com/GreenSwampDweller/torchlight-rekindled/releases/download/1.0.2/TorchlightRekindled-1.0.2.apk
+          echo "83dc713fb987130f27097f8e9def08cb496acde21618bcec6af47d3c1ebb4365  base.apk" | sha256sum -c -
+
+      - name: Repack with the new engine and sign
+        run: |
+          set -eu
+          python3 tools/repack_apk.py base.apk dex/classes.dex unsigned.apk --lib "$SO"
+          "$BT/apksigner" sign \
+            --ks android/zh-signing.jks --ks-pass pass:torchlightzh \
+            --ks-key-alias torchlightzh --key-pass pass:torchlightzh \
+            --out TorchlightRekindled-1.0.2-zh-cjk.apk unsigned.apk
+          "$BT/apksigner" verify --print-certs TorchlightRekindled-1.0.2-zh-cjk.apk
+          sha256sum TorchlightRekindled-1.0.2-zh-cjk.apk | tee sha256.txt
+          unzip -l TorchlightRekindled-1.0.2-zh-cjk.apk | grep -E "libtorchlight|classes.dex"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: libtorchlight-so
-          path: '**/libtorchlight.so'
+          name: zh-cjk-apk
+          path: |
+            TorchlightRekindled-1.0.2-zh-cjk.apk
+            sha256.txt
           if-no-files-found: error

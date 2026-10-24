@@ -18,6 +18,10 @@
 namespace tl::render {
 
 namespace {
+
+/// The resource group the pak is mounted in (renderer.cpp).
+constexpr const char* kGameGroup = "Torchlight";
+
 float g_ui_text_scale = 1.0f;
 }
 
@@ -153,16 +157,63 @@ bool read_menu_resource(const std::string& path, const std::string& group,
     }
 }
 
+namespace {
+
+/// The characters a Chinese interface needs. OGRE bakes a glyph atlas from the
+/// code points it is told about, and the port's own font is Latin only, so a
+/// layout written in UTF-8 would otherwise come out as one '?' per character.
+/// Gathered from the interface pack's four front-end layouts: 131 characters,
+/// which is what the menus actually use.
+constexpr Ogre::Font::CodePoint kChineseCodePoints[] = {
+    0x3002, 0x4E00, 0x4E0E, 0x4E1A, 0x4E2A, 0x4E2D, 0x4E45, 0x4E4B,
+    0x4EA1, 0x4EBA, 0x4F5C, 0x4F60, 0x4F7F, 0x5149, 0x5165, 0x5173,
+    0x51FA, 0x5220, 0x5236, 0x52A9, 0x52B1, 0x5355, 0x53CB, 0x53D6,
+    0x53D8, 0x540D, 0x548C, 0x56DE, 0x56F0, 0x5728, 0x5916, 0x5956,
+    0x597D, 0x59CB, 0x5B57, 0x5B8C, 0x5B9A, 0x5BA0, 0x5C06, 0x5C11,
+    0x5C31, 0x5DE8, 0x5DF2, 0x5E2E, 0x5EA6, 0x5EFA, 0x5F00, 0x5F0F,
+    0x5F15, 0x5F97, 0x620F, 0x6210, 0x62E9, 0x6392, 0x63CF, 0x64CD,
+    0x64CE, 0x6574, 0x65B0, 0x65E0, 0x666E, 0x6709, 0x672C, 0x672F,
+    0x6761, 0x6781, 0x67E5, 0x6838, 0x690D, 0x699C, 0x6A21, 0x6B21,
+    0x6B7B, 0x6C34, 0x6C38, 0x6CD5, 0x6D17, 0x6D88, 0x6E38, 0x706B,
+    0x70AC, 0x70B9, 0x7248, 0x7269, 0x74F6, 0x7528, 0x770B, 0x786C,
+    0x786E, 0x79F0, 0x79FB, 0x7B26, 0x7B80, 0x7ED9, 0x7EE7, 0x7EED,
+    0x804C, 0x81F3, 0x8272, 0x82F1, 0x836F, 0x83B7, 0x884C, 0x8981,
+    0x89D2, 0x89E3, 0x8BA4, 0x8BD5, 0x8D60, 0x8EAB, 0x8F7D, 0x8FD4,
+    0x8FD9, 0x8FF0, 0x9000, 0x9001, 0x9009, 0x901A, 0x9501, 0x95ED,
+    0x9664, 0x96BE, 0x96C4, 0x9879, 0x989D, 0x9B54, 0x9C7C, 0xFF08,
+    0xFF09, 0xFF0C, 0xFF1F,
+};
+
+/// The font the interface is drawn with: a Chinese patch's own, when the
+/// player's data carries one (the patches for the PC release put `msyh.ttf`
+/// beside the pak), else the port's Latin one.
+const char* menu_font_file() {
+    static const char* const kChineseFonts[] = {
+        "media/ui/msyh.ttf", "media/ui/msyh.TTF",
+        "media/UI/msyh.ttf", "media/UI/msyh.TTF",
+    };
+    auto& groups = Ogre::ResourceGroupManager::getSingleton();
+    for (const char* name : kChineseFonts) {
+        if (groups.resourceExists(kGameGroup, name)) return name;
+    }
+    return kFontFile;
+}
+
+}  // namespace
+
 bool ensure_menu_font() {
     auto& fonts = Ogre::FontManager::getSingleton();
     if (fonts.getByName(kFontName, Ogre::RGN_INTERNAL)) return true;
     try {
         Ogre::FontPtr font = fonts.create(kFontName, Ogre::RGN_INTERNAL);
         font->setType(Ogre::FT_TRUETYPE);
-        font->setSource(kFontFile);
+        font->setSource(menu_font_file());
         font->setTrueTypeSize(48);
         font->setTrueTypeResolution(96);
         font->addCodePointRange(Ogre::Font::CodePointRange(32, 255));
+        for (const Ogre::Font::CodePoint code : kChineseCodePoints) {
+            font->addCodePointRange(Ogre::Font::CodePointRange(code, code));
+        }
         font->load();
         return true;
     } catch (const Ogre::Exception& e) {

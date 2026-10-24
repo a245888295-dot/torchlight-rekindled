@@ -4,6 +4,29 @@
 
 namespace tl::render {
 
+namespace {
+
+/// The code point that starts at `i`, as UTF-8, and `i` moved past it. A byte
+/// that is not a lead byte stands for itself, so Latin text measures as it
+/// always did and a Chinese character is one glyph rather than three.
+Ogre::Font::CodePoint next_code_point(const std::string& text, std::size_t& i) {
+    const auto lead = static_cast<unsigned char>(text[i]);
+    std::size_t extra = 0;
+    if (lead >= 0xF0) extra = 3;
+    else if (lead >= 0xE0) extra = 2;
+    else if (lead >= 0xC0) extra = 1;
+    Ogre::Font::CodePoint code = extra == 0 ? lead : (lead & (0xFFu >> (extra + 1)));
+    ++i;
+    for (std::size_t k = 0; k < extra && i < text.size(); ++k, ++i) {
+        code = (code << 6) | (static_cast<unsigned char>(text[i]) & 0x3Fu);
+    }
+    return code;
+}
+
+}  // namespace
+
+
+
 std::vector<std::string> wrap_text(const Ogre::FontPtr& font, const std::string& text, float width,
                                    float char_height, float across, float down) {
     std::vector<std::string> lines;
@@ -15,8 +38,8 @@ std::vector<std::string> wrap_text(const Ogre::FontPtr& font, const std::string&
     const float coefficient = across > 0.0f ? down / across : 1.0f;
     auto measure = [&](const std::string& s) {
         float total = 0.0f;
-        for (unsigned char c : s) {
-            total += font->getGlyphInfo(c).advance * char_height * coefficient;
+        for (std::size_t i = 0; i < s.size();) {
+            total += font->getGlyphInfo(next_code_point(s, i)).advance * char_height * coefficient;
         }
         return total;
     };
@@ -69,8 +92,8 @@ float measure_text(const Ogre::FontPtr& font, const std::string& text, float cha
     if (!font) return 0.0f;
     const float coefficient = across > 0.0f ? down / across : 1.0f;
     float total = 0.0f;
-    for (unsigned char c : text) {
-        total += font->getGlyphInfo(c).advance * char_height * coefficient;
+    for (std::size_t i = 0; i < text.size();) {
+        total += font->getGlyphInfo(next_code_point(text, i)).advance * char_height * coefficient;
     }
     return total;
 }
