@@ -122,7 +122,7 @@ final class GameMenu extends FrameLayout {
         // ----------------------------------------------------------- the ways out
         LinearLayout top = new LinearLayout(host);
         top.setOrientation(LinearLayout.HORIZONTAL);
-        top.addView(button("返回游戏", true, v -> hide()), weight());
+        top.addView(button("返回游戏", true, v -> close()), weight());
         top.addView(button("最小化", false, v -> callbacks.minimise()), weight());
         card.addView(spaced(top, 16, 0));
         card.addView(spaced(button("退出游戏", false, v -> callbacks.quitGame()), 8, 0));
@@ -131,7 +131,7 @@ final class GameMenu extends FrameLayout {
         scroll.setFillViewport(true);
         scroll.addView(card, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        scroll.setOnClickListener(v -> hide());  // a tap beside the card closes it
+        scroll.setOnClickListener(v -> close());  // a tap beside the card closes it
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
         lp.setMargins(dp(24), dp(24), dp(24), dp(24));
