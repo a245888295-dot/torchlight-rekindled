@@ -81,7 +81,7 @@ public final class Launcher extends Activity {
     private static final int PAGE_ABOUT = 3;
 
     /** Which build this is: the About page shows it, and `strings` on the installed dex finds it. */
-    private static final String BUILD = "zh2";
+    private static final String BUILD = "zh3";
 
     private static final String[] TAB_ICONS = {"⌂", "⚙", "✦", "ⓘ"};
     private static final String[] TAB_NAMES = {"首页", "设置", "补丁", "关于"};
@@ -103,6 +103,25 @@ public final class Launcher extends Activity {
      * it): it is brought back rather than started again. The process ends with the game.
      */
     private static boolean gameRunning;
+
+    /**
+     * How many GameActivity instances are up. One for the game, and briefly two
+     * when the in-game panel restarts it: the old one's onDestroy must not
+     * report that the game has gone.
+     */
+    private static int games;
+
+    /** GameActivity came up: from now on the icon returns to the game, not to this screen. */
+    static void gameStarted() {
+        games++;
+        gameRunning = true;
+    }
+
+    /** GameActivity went away, unless another has already started in its place. */
+    static void gameEnded() {
+        games = Math.max(0, games - 1);
+        gameRunning = games > 0;
+    }
 
     /** The game has been started; nothing more to do here. */
     private boolean started;
@@ -499,7 +518,6 @@ public final class Launcher extends Activity {
             // The engine then renders at the screen's own resolution.
         }
         started = true;
-        gameRunning = true;
         startActivity(new Intent(this, GameActivity.class));
         finish();
     }
@@ -568,7 +586,7 @@ public final class Launcher extends Activity {
     }
 
     /** Whether config.txt already names this key: the engine's own value is kept when it does. */
-    private static boolean hasConfig(String folder, String wanted) {
+    static boolean hasConfig(String folder, String wanted) {
         try {
             for (String line : read(new File(folder, "config.txt")).split("\r?\n")) {
                 String[] kv = line.split("#", 2)[0].split("=", 2);
@@ -605,7 +623,7 @@ public final class Launcher extends Activity {
      * A number line of `config.txt` in the game folder, as the engine reads it (`fps_limit`, or
      * `0`/`1` for a switch): `fallback`, the engine's own default, when it says nothing.
      */
-    private static int readConfig(String folder, String wanted, int fallback) {
+    static int readConfig(String folder, String wanted, int fallback) {
         try {
             for (String line : read(new File(folder, "config.txt")).split("\r?\n")) {
                 String[] kv = line.split("#", 2)[0].split("=", 2);
@@ -624,7 +642,7 @@ public final class Launcher extends Activity {
      * comment. With no file yet, and the engine's default asked for, none is made: the engine
      * writes its own on the first start.
      */
-    private static void writeConfig(String folder, String wanted, int value, int fallback,
+    static void writeConfig(String folder, String wanted, int value, int fallback,
             String comment) {
         File file = new File(folder, "config.txt");
         String text;
@@ -933,7 +951,7 @@ public final class Launcher extends Activity {
         for (String name : names) copyAssets(assets, from + "/" + name, new File(to, name));
     }
 
-    private static String read(File file) throws IOException {
+    static String read(File file) throws IOException {
         try (InputStream in = new java.io.FileInputStream(file)) {
             java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
             byte[] buffer = new byte[256];
