@@ -40,6 +40,12 @@ jobs:
           ninja --version
           ls external/ogre/CMakeLists.txt external/particleuniverse
 
+      - name: Patch the submodules
+        run: |
+          set -eu
+          python3 scripts/apply_patches.py
+          python3 scripts/apply_patches.py --check | tail -5
+
       - name: Python with Pillow
         run: |
           set -eu
